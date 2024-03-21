@@ -2,18 +2,31 @@ import numpy as np
 import os
 import GPUtil
 import sys
+import argparse
 if len(GPUtil.getAvailable())>0:
     import cupy as cp
 
 def main():
 
+    parser = argsparse.ArgumentParser(description='Generate active noise trajectory')
+    parser.add_argument('--N', default=100, help='linear system size')
+    parser.add_argument('--do_output', default=0, help-'wherther to print noise field to file')
+    parser.add_argument('--print_freq', default=100, help='how often to output noise configurations (in timesteps)')
+    parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
+
+    args = parser.parse_args()
+    N = args.N
+    do_output = args.do_output
+    print_freq = args.print_freq
+    xpu = args.xpu
+
     params = {}
 
-    params['N'] = 100
+    params['N'] = N
     params['dx'] = 1.0
     params['print_freq'] = 100
-    params['do_output'] = 1
-    params['output_freq'] = 100
+    params['do_output'] = do_output
+    params['output_freq'] = print_freq
     params['lambda'] = 10.0
     params['tau'] = 1.0
     params['dim'] = 2
@@ -21,7 +34,7 @@ def main():
     params['dt'] = 1e-2
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
-    params['xpu'] = sys.argv[1]
+    params['xpu'] = xpu
 
     gen_trajectory(**params)
 
