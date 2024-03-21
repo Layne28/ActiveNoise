@@ -1,7 +1,9 @@
 import numpy as np
-import cupy as cp
 import os
 import GPUtil
+import sys
+if len(GPUtil.getAvailable())>0:
+    import cupy as cp
 
 def main():
 
@@ -55,7 +57,7 @@ def gen_trajectory(**kwargs):
         else:
             traj_arr = cp.zeros((dim,N,N,N,nsteps))
     else:
-        prin('Using CPU')
+        print('Using CPU')
         if dim==1:
             traj_arr = np.zeros((dim,N,nsteps))
         elif dim==2:
@@ -63,7 +65,10 @@ def gen_trajectory(**kwargs):
         else:
             traj_arr = np.zeros((dim,N,N,N,nsteps))
 
-    xp = cp.get_array_module(traj_arr)
+    if len(GPUtil.getAvailable())>0:
+        xp = cp.get_array_module(traj_arr)
+    else:
+        xp = np
     L = N*dx
 
     #Create output directory
@@ -108,74 +113,43 @@ def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
     OUTPUT: Numpy array containing spatial correlation at each wavevector
     """
 
-    if xpu=='gpu':
- 
-        #Define wavevectors
-        myvec = cp.zeros(N)
-        for i in range(N//2+1):
-            myvec[i] = i
-        for i in range(N//2+1,N):
-            myvec[i] = i-N
-        kvec = 2*cp.pi/(N*dx)*myvec
-        if dim==1:
-            kx = kvec
-        elif dim==2:
-            kx, ky = cp.meshgrid(kvec, kvec)
-        else:
-            kx, ky, kz = cp.meshgrid(kvec, kvec, kvec)
-
-        #Get spatial correlation function
-        if cov_type=='exponential':
-            if dim==1:
-                ck = 1.0/(1+l**2*kx**2)
-            elif dim==2:
-                ck = 1.0/pow(1+l**2*(kx**2+ky**2),3.0/2.0)
-            else:
-                ck = 1.0/pow(1+l**2*(kx**2+ky**2+kz**2),2.0)
-        elif cov_type=='gaussian':
-            if dim==1:
-                ck = cp.exp(-l**2*kx**2/2.0)
-            elif dim==2:
-                ck = cp.exp(-l**2*(kx**2+ky**2)/2.0)
-            else:
-                ck = cp.exp(-l**2*(kx**2+ky**2+kz**2)/2.0)
-        else:
-            ck = 0.0*kx
-        ck = ck/(cp.sum(ck)*(N*dx)**dim)
-
+    if len(GPUtil.getAvailable())>0:
+        xp = cp.get_array_module(ck)
     else:
-        #Define wavevectors
-        myvec = np.zeros(N)
-        for i in range(N//2+1):
-            myvec[i] = i
-        for i in range(N//2+1,N):
-            myvec[i] = i-N
-        kvec = 2*np.pi/(N*dx)*myvec
-        if dim==1:
-            kx = kvec
-        elif dim==2:
-            kx, ky = np.meshgrid(kvec, kvec)
-        else:
-            kx, ky, kz = np.meshgrid(kvec, kvec, kvec)
+        xp = np
+ 
+    #Define wavevectors
+    myvec = xp.zeros(N)
+    for i in range(N//2+1):
+        myvec[i] = i
+    for i in range(N//2+1,N):
+        myvec[i] = i-N
+    kvec = 2*xp.pi/(N*dx)*myvec
+    if dim==1:
+        kx = kvec
+    elif dim==2:
+        kx, ky = xp.meshgrid(kvec, kvec)
+    else:
+        kx, ky, kz = xp.meshgrid(kvec, kvec, kvec)
 
-        #Get spatial correlation function
-        if cov_type=='exponential':
-            if dim==1:
-                ck = 1.0/(1+l**2*kx**2)
-            elif dim==2:
-                ck = 1.0/pow(1+l**2*(kx**2+ky**2),3.0/2.0)
-            else:
-                ck = 1.0/pow(1+l**2*(kx**2+ky**2+kz**2),2.0)
-        elif cov_type=='gaussian':
-            if dim==1:
-                ck = np.exp(-l**2*kx**2/2.0)
-            elif dim==2:
-                ck = np.exp(-l**2*(kx**2+ky**2)/2.0)
-            else:
-                ck = np.exp(-l**2*(kx**2+ky**2+kz**2)/2.0)
+    #Get spatial correlation function
+    if cov_type=='exponential':
+        if dim==1:
+            ck = 1.0/(1+l**2*kx**2)
+        elif dim==2:
+            ck = 1.0/pow(1+l**2*(kx**2+ky**2),3.0/2.0)
         else:
-            ck = 0.0*kx
-        ck = ck/(np.sum(ck)*(N*dx)**dim)
+            ck = 1.0/pow(1+l**2*(kx**2+ky**2+kz**2),2.0)
+    elif cov_type=='gaussian':
+        if dim==1:
+            ck = xp.exp(-l**2*kx**2/2.0)
+        elif dim==2:
+            ck = xp.exp(-l**2*(kx**2+ky**2)/2.0)
+        else:
+            ck = xp.exp(-l**2*(kx**2+ky**2+kz**2)/2.0)
+    else:
+        ck = 0.0*kx
+    ck = ck/(xp.sum(ck)*(N*dx)**dim)
 
     return ck
 
@@ -190,7 +164,10 @@ def gen_field(N, dx, dim, ck):
     OUTPUT: Noise field (numpy array of size (dim, N, ..., N/2+1) with N repeated dim-1 times)
     """
 
-    xp = cp.get_array_module(ck)
+    if len(GPUtil.getAvailable())>0:
+        xp = cp.get_array_module(ck)
+    else:
+        xp = np
 
     if dim==1:
         noise = xp.zeros((1,N//2+1), dtype=xp.complex128)
@@ -224,7 +201,10 @@ def get_real_field(field, N):
     OUTPUT: Real-space field (numpy array of size (dim, N, ..., N) with N repeated dim times)
     """
 
-    xp = cp.get_array_module(field)
+    if len(GPUtil.getAvailable())>0:
+        xp = cp.get_array_module(ck)
+    else:
+        xp = np
 
     dim = field.shape[0]
 
