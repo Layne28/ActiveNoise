@@ -12,14 +12,18 @@ def main():
     parser = argparse.ArgumentParser(description='Generate active noise trajectory')
     parser.add_argument('--N', default=400, help='linear system size')
     parser.add_argument('--do_output', default=0, help='whether to print noise field to file')
-    parser.add_argument('--print_freq', default=100, help='how often to output noise configurations (in timesteps)')
-    parser.add_argument('--nsteps', default=100, help='number of timesteps')
+    parser.add_argument('--print_freq', default=100, help='how often to print information (in timesteps)')
+    parser.add_argument('--output_freq', default=100, help='how often to output noise configurations (in timesteps)')
+    parser.add_argument('--nsteps', default=5000, help='number of timesteps')
+    parser.add_argument('--chunksize', default=500, help='how big to make chunks of random numbers (in timesteps)')
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
 
     args = parser.parse_args()
     N = args.N
     do_output = args.do_output
     print_freq = args.print_freq
+    output_freq = args.output_freq
+    chunksize = args.chunksize
     nsteps = args.nsteps
     xpu = args.xpu
 
@@ -27,13 +31,14 @@ def main():
 
     params['N'] = int(N)
     params['dx'] = 1.0
-    params['print_freq'] = 100
+    params['print_freq'] = int(print_freq)
     params['do_output'] = int(do_output)
-    params['output_freq'] = int(print_freq)
+    params['output_freq'] = int(output_freq)
     params['lambda'] = 10.0
     params['tau'] = 1.0
     params['dim'] = 2
     params['nsteps'] = int(nsteps)
+    params['chunksize'] = int(chunksize)
     params['dt'] = 1e-2
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
@@ -59,6 +64,7 @@ def gen_trajectory(**kwargs):
     tau = kwargs['tau']
     dim = kwargs['dim']
     nsteps = kwargs['nsteps']
+    chunksize = kwargs['chunksize']
     dt = kwargs['dt']
     D = kwargs['D']
     cov_type = kwargs['cov_type']
@@ -79,22 +85,21 @@ def gen_trajectory(**kwargs):
         print('Using CPU')
         xp = np
 
+    '''
     if dim==1:
         init_arr = xp.zeros((dim,N))
     elif dim==2:
         init_arr = xp.zeros((dim,N,N))
     else:
         init_arr = xp.zeros((dim,N,N,N))
- 
+    ''' 
+    init_arr = xp.array([])
     #Get trajectory
     traj_arr, fourier_noise = run(init_arr, **kwargs)
-    #traj_arr, fourier_noise = run(init_arr, N, dx, print_freq, output_freq, do_output, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu)
-    #traj_arr = run(init_arr, N, dx, print_freq, output_freq, do_output, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu)
 
     return traj_arr
 
 def run(init_fourier_arr, **kwargs):
-#def run(init_fourier_arr, N, dx, print_freq, do_output, output_freq, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu):
 
     N = kwargs['N']
     dx = kwargs['dx']
@@ -105,11 +110,15 @@ def run(init_fourier_arr, **kwargs):
     tau = kwargs['tau']
     dim = kwargs['dim']
     nsteps = kwargs['nsteps']
+    chunksize = kwargs['chunksize']
     dt = kwargs['dt']
     D = kwargs['D']
     cov_type = kwargs['cov_type']
     xpu = kwargs['xpu']
+
+    #derived variables
     L = N*dx
+    nchunks = nsteps//chunksize
 
     if len(GPUtil.getAvailable())>0:
         if xpu=='gpu':
@@ -122,51 +131,60 @@ def run(init_fourier_arr, **kwargs):
         print('Using CPU')
         xp = np
 
-    '''
+
     if dim==1:
-        traj_arr = xp.zeros((dim,N,nsteps))
+        traj_arr = np.zeros((dim,N,nsteps))
     elif dim==2:
-        traj_arr = xp.zeros((dim,N,N,nsteps))
+        traj_arr = np.zeros((dim,N,N,nsteps))
     else:
-        traj_arr = xp.zeros((dim,N,N,N,nsteps))
-    '''
-    
+        traj_arr = np.zeros((dim,N,N,N,nsteps))
+
+    '''    
     if dim==1:
-        traj_arr = xp.zeros((1,N//2+1,nsteps), dtype=xp.complex64)
+        traj_arr = np.zeros((1,N//2+1,nsteps), dtype=xp.complex64)
     elif dim==2:
-        traj_arr = xp.zeros((2,N,N//2+1,nsteps), dtype=xp.complex64)
+        traj_arr = np.zeros((2,N,N//2+1,nsteps), dtype=xp.complex64)
     else:
-        traj_arr = xp.zeros((3,N,N,N//2+1,nsteps), dtype=xp.complex64)
-    
+        traj_arr = np.zeros((3,N,N,N//2+1,nsteps), dtype=xp.complex64)
+    '''
     ck = get_spatial_covariance(N, dx, dim, cov_type, Lambda, xpu)
     fourier_noise = init_fourier_arr
 
-    spat_corr_field = gen_field(N, dx, dim, nsteps, ck)
-    for n in range(nsteps):
+    for c in range(nchunks):
 
-        if n%print_freq==0:
-            print('active noise step', n)
+        print('chunk', c)
 
-        if n==0: #and xp.count_nonzero(init_fourier_arr)==0:
-            print('generating initial field')
-            fourier_noise = xp.sqrt(D*L**dim)*spat_corr_field[...,n]#gen_field(N, dx, dim, ck)
-            traj_arr[...,0] = fourier_noise
-            #real_noise = get_real_field(fourier_noise, N)
-            #traj_arr[...,0] = real_noise
-
+        if dim==1:
+            fourier_arr = xp.zeros((1,N//2+1,chunksize), dtype=xp.complex64)
+        elif dim==2:
+            fourier_arr = xp.zeros((2,N,N//2+1,chunksize), dtype=xp.complex64)
         else:
-            noise_incr = xp.sqrt(2*D*L**dim*dt/tau)*spat_corr_field[...,n]#gen_field(N, dx, dim, ck);
-            fourier_noise = (1.0-dt/tau)*fourier_noise + noise_incr
-            traj_arr[...,n] = fourier_noise
-            #real_noise = get_real_field(fourier_noise, N)
-            #traj_arr[...,n] = real_noise
+            fourier_arr = xp.zeros((3,N,N,N//2+1,chunksize), dtype=xp.complex64)
+            
+        spat_corr_field = gen_field(N, dx, dim, chunksize, ck)
 
-        if do_output==1 and n%output_freq==0:
-            xp.savez('data/field_%04d.npz' % n, real_noise)
+        print(chunksize)
+        for n in range(chunksize):
 
-    #Take inverse fourier transform of noise trajectory    
-    print('computing FFT...')
-    traj = get_real_field(traj_arr, N)
+            if n%print_freq==0:
+                print('active noise step', n)
+
+            if c==0 and n==0 and init_fourier_arr.size==0:
+                print('generating initial field')
+                fourier_noise = xp.sqrt(D*L**dim)*spat_corr_field[...,n]
+                fourier_arr[...,0] = fourier_noise
+
+            else:
+                noise_incr = xp.sqrt(2*D*L**dim*dt/tau)*spat_corr_field[...,n]
+                fourier_noise = (1.0-dt/tau)*fourier_noise + noise_incr
+                fourier_arr[...,n] = fourier_noise
+
+            #if do_output==1 and n%output_freq==0:
+            #    xp.savez('data/field_%04d.npz' % (n+c*chunksize), real_noise)
+
+        #Take inverse fourier transform of noise trajectory    
+        print('computing FFT...')
+        traj_arr[...,(c*chunksize):((c+1)*chunksize)] = xp.asnumpy(get_real_field(fourier_arr, N))
 
     return traj_arr, fourier_noise
     #return traj_arr
