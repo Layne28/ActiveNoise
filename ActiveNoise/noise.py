@@ -32,7 +32,7 @@ def main():
     params['lambda'] = 10.0
     params['tau'] = 1.0
     params['dim'] = 2
-    params['nsteps'] = 2000
+    params['nsteps'] = 1000
     params['dt'] = 1e-2
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
@@ -86,16 +86,15 @@ def gen_trajectory(**kwargs):
         init_arr = xp.zeros((dim,N,N,N))
  
     #Get trajectory
-    #traj_arr, fourier_noise = run(init_arr, **kwargs)
+    traj_arr, fourier_noise = run(init_arr, **kwargs)
     #traj_arr, fourier_noise = run(init_arr, N, dx, print_freq, output_freq, do_output, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu)
-    traj_arr = run(init_arr, N, dx, print_freq, output_freq, do_output, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu)
+    #traj_arr = run(init_arr, N, dx, print_freq, output_freq, do_output, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu)
 
     return traj_arr
 
-#def run(init_fourier_arr, **kwargs):
-def run(init_fourier_arr, N, dx, print_freq, do_output, output_freq, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu):
+def run(init_fourier_arr, **kwargs):
+#def run(init_fourier_arr, N, dx, print_freq, do_output, output_freq, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu):
 
-    '''
     N = kwargs['N']
     dx = kwargs['dx']
     print_freq = kwargs['print_freq']
@@ -109,7 +108,6 @@ def run(init_fourier_arr, N, dx, print_freq, do_output, output_freq, Lambda, tau
     D = kwargs['D']
     cov_type = kwargs['cov_type']
     xpu = kwargs['xpu']
-    '''
     L = N*dx
 
     if len(GPUtil.getAvailable())>0:
@@ -154,8 +152,8 @@ def run(init_fourier_arr, N, dx, print_freq, do_output, output_freq, Lambda, tau
         if do_output==1 and n%output_freq==0:
             xp.savez('data/field_%04d.npz' % n, real_noise)
 
-    #return traj_arr, fourier_noise
-    return traj_arr
+    return traj_arr, fourier_noise
+    #return traj_arr
 
 def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
 
@@ -270,16 +268,16 @@ def get_real_field(field, N):
 
     if dim==1:
         real_field = xp.zeros((1,N))
-        real_field[0,...] = xp.fft.irfft(field)
+        real_field[0] = xp.fft.irfft(field)
     elif dim==2:
         real_field = xp.zeros((2,N,N))
-        real_field[0,...] = xp.fft.irfft2(field[0,:,:])
-        real_field[1,...] = xp.fft.irfft2(field[1,:,:])
+        real_field[0] = xp.fft.irfft2(field[0,:,:])
+        real_field[1] = xp.fft.irfft2(field[1,:,:])
     else:
         real_field = xp.zeros((3,N,N,N))
-        real_field[0,...] = xp.fft.irfftn(field[0,:,:,:])
-        real_field[1,...] = xp.fft.irfftn(field[1,:,:,:])
-        real_field[2,...] = xp.fft.irfftn(field[2,:,:,:])
+        real_field[0] = xp.fft.irfftn(field[0,:,:,:])
+        real_field[1] = xp.fft.irfftn(field[1,:,:,:])
+        real_field[2] = xp.fft.irfftn(field[2,:,:,:])
 
     real_field = xp.array(real_field)
     return real_field
