@@ -3,14 +3,16 @@ import os
 import GPUtil
 import sys
 import argparse
-if len(GPUtil.getAvailable())>0:
+import torch
+
+if torch.cuda.is_available():
     import cupy as cp
 
 def main():
 
-    parser = argsparse.ArgumentParser(description='Generate active noise trajectory')
-    parser.add_argument('--N', default=100, help='linear system size')
-    parser.add_argument('--do_output', default=0, help-'wherther to print noise field to file')
+    parser = argparse.ArgumentParser(description='Generate active noise trajectory')
+    parser.add_argument('--N', default=400, help='linear system size')
+    parser.add_argument('--do_output', default=0, help='whether to print noise field to file')
     parser.add_argument('--print_freq', default=100, help='how often to output noise configurations (in timesteps)')
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
 
@@ -61,57 +63,97 @@ def gen_trajectory(**kwargs):
     cov_type = kwargs['cov_type']
     xpu = kwargs['xpu']
 
-    if xpu=='gpu' and len(GPUtil.getAvailable())>0:
-        print('Using GPU')
-        if dim==1:
-            traj_arr = cp.zeros((dim,N,nsteps))
-        elif dim==2:
-            traj_arr = cp.zeros((dim,N,N,nsteps))
-        else:
-            traj_arr = cp.zeros((dim,N,N,N,nsteps))
-    else:
-        print('Using CPU')
-        if dim==1:
-            traj_arr = np.zeros((dim,N,nsteps))
-        elif dim==2:
-            traj_arr = np.zeros((dim,N,N,nsteps))
-        else:
-            traj_arr = np.zeros((dim,N,N,N,nsteps))
-
-    if len(GPUtil.getAvailable())>0:
-        xp = cp.get_array_module(traj_arr)
-    else:
-        xp = np
-    L = N*dx
-
     #Create output directory
     if not os.path.exists('./data') and do_output==1:
         os.makedirs('./data')
+
+    if torch.cuda.is_available():
+        if xpu=='gpu':
+            print('Using GPU')
+            xp = cp
+        else:
+            print('Using CPU')
+            xp = np
+    else:
+        print('Using GPU')
+        xp = np
+
+    if dim==1:
+        init_arr = xp.zeros((dim,N))
+    elif dim==2:
+        init_arr = xp.zeros((dim,N,N))
+    else:
+        init_arr = xp.zeros((dim,N,N,N))
  
-    #Generate initial field
-    ck = get_spatial_covariance(N, dx, dim, cov_type, Lambda, xpu)
-    fourier_noise = xp.sqrt(D*L**dim)*gen_field(N, dx, dim, ck)
-    real_noise = get_real_field(fourier_noise, N)
-    traj_arr[...,0] = real_noise
-    if do_output==1:
-        xp.savez('data/field_0000.npz', real_noise)
-
     #Get trajectory
-    for n in range(nsteps-1):
-        if n%print_freq==0:
-            print('active noise step', n)
-
-        noise_incr = xp.sqrt(2*D*L**dim*dt/tau)*gen_field(N, dx, dim, ck);
-        fourier_noise = (1.0-dt/tau)*fourier_noise + noise_incr
-        real_noise = get_real_field(fourier_noise, N)
-
-        traj_arr[...,n+1] = real_noise
-
-        if do_output==1 and n%output_freq==0:
-            xp.savez('data/field_%04d.npz' % (n+1), real_noise)
+    traj_arr, fourier_noise = run(init_arr, **kwargs)
+    #traj_arr, fourier_noise = run(init_arr, N, dx, print_freq, output_freq, do_output, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu)
+    #traj_arr = run(init_arr, N, dx, print_freq, output_freq, do_output, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu)
 
     return traj_arr
 
+def run(init_fourier_arr, **kwargs):
+#def run(init_fourier_arr, N, dx, print_freq, do_output, output_freq, Lambda, tau, dim, nsteps, dt, D, cov_type, xpu):
+
+    N = kwargs['N']
+    dx = kwargs['dx']
+    print_freq = kwargs['print_freq']
+    do_output = kwargs['do_output']
+    output_freq = kwargs['output_freq']
+    Lambda = kwargs['lambda']
+    tau = kwargs['tau']
+    dim = kwargs['dim']
+    nsteps = kwargs['nsteps']
+    dt = kwargs['dt']
+    D = kwargs['D']
+    cov_type = kwargs['cov_type']
+    xpu = kwargs['xpu']
+    L = N*dx
+
+    if torch.cuda.is_available():
+        if xpu=='gpu':
+            print('Using GPU')
+            xp = cp
+        else:
+            print('Using CPU')
+            xp = np
+    else:
+        print('Using GPU')
+        xp = np
+
+    if dim==1:
+        traj_arr = xp.zeros((dim,N,nsteps))
+    elif dim==2:
+        traj_arr = xp.zeros((dim,N,N,nsteps))
+    else:
+        traj_arr = xp.zeros((dim,N,N,N,nsteps))
+    
+    ck = get_spatial_covariance(N, dx, dim, cov_type, Lambda, xpu)
+    fourier_noise = init_fourier_arr
+
+    spat_corr_field = gen_field(N, dx, dim, nsteps, ck)
+    for n in range(nsteps):
+
+        if n%print_freq==0:
+            print('active noise step', n)
+
+        if n==0 and xp.count_nonzero(init_fourier_arr)==0:
+            print('generating initial field')
+            fourier_noise = xp.sqrt(D*L**dim)*spat_corr_field[...,n]#gen_field(N, dx, dim, ck)
+            real_noise = get_real_field(fourier_noise, N)
+            traj_arr[...,0] = real_noise
+
+        else:
+            noise_incr = xp.sqrt(2*D*L**dim*dt/tau)*spat_corr_field[...,n]#gen_field(N, dx, dim, ck);
+            fourier_noise = (1.0-dt/tau)*fourier_noise + noise_incr
+            real_noise = get_real_field(fourier_noise, N)
+            traj_arr[...,n] = real_noise
+
+        if do_output==1 and n%output_freq==0:
+            xp.savez('data/field_%04d.npz' % n, real_noise)
+
+    return traj_arr, fourier_noise
+    #return traj_arr
 
 def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
 
@@ -126,8 +168,11 @@ def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
     OUTPUT: Numpy array containing spatial correlation at each wavevector
     """
 
-    if len(GPUtil.getAvailable())>0:
-        xp = cp.get_array_module(ck)
+    if torch.cuda.is_available():
+        if xpu=='gpu':
+            xp = cp
+        else:
+            xp = np
     else:
         xp = np
  
@@ -166,41 +211,41 @@ def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
 
     return ck
 
-def gen_field(N, dx, dim, ck):
+def gen_field(N, dx, dim, nsteps, ck):
 
     """Create a spatially correlated noise field in Fourier space
 
     INPUT: Linear size of field (int),
            dimension of field (int),
+           number of time steps (int),
            spatial correlation function (numpy array)
 
-    OUTPUT: Noise field (numpy array of size (dim, N, ..., N/2+1) with N repeated dim-1 times)
+    OUTPUT: Noise field (numpy array of size (dim, N, ..., N/2+1, nsteps) with N repeated dim-1 times)
     """
 
-    if len(GPUtil.getAvailable())>0:
+    if torch.cuda.is_available():
         xp = cp.get_array_module(ck)
     else:
         xp = np
 
     if dim==1:
-        noise = xp.zeros((1,N//2+1), dtype=xp.complex128)
+        noise = xp.zeros((1,N//2+1,nsteps), dtype=xp.complex128)
     elif dim==2:
-        noise = xp.zeros((2,N,N//2+1), dtype=xp.complex128)
+        noise = xp.zeros((2,N,N//2+1,nsteps), dtype=xp.complex128)
     else:
-        noise = xp.zeros((3,N,N,N//2+1), dtype=xp.complex128)
-    for d in range(dim):
-        white_noise = xp.sqrt(N**dim)*xp.random.normal(loc=0.0, scale=1.0, size=tuple([N]*dim))
-        if dim==1:
-            fourier_white_noise = xp.fft.rfft(white_noise)
-            noise[d] = xp.multiply(xp.sqrt(ck[:(N//2+1)]), fourier_white_noise)
-        elif dim==2:
-            fourier_white_noise = xp.fft.rfft2(white_noise)
-            noise[d] = xp.multiply(xp.sqrt(ck[:,:(N//2+1)]), fourier_white_noise)
-        else:
-            fourier_white_noise = xp.fft.rfftn(white_noise)
-            noise[d] = xp.multiply(xp.sqrt(ck[:,:,:(N//2+1)]), fourier_white_noise)
+        noise = xp.zeros((3,N,N,N//2+1,nsteps), dtype=xp.complex128)
 
+    print([dim] + [N]*dim + [nsteps])
+    print('generating big white noise array...')
+    white_noise = xp.sqrt(N**dim)*xp.random.normal(loc=0.0, scale=1.0, size=tuple([dim] + [N]*dim + [nsteps]))
+    print('done')
+
+    for t in range(nsteps):
+        for d in range(dim):
+            fourier_white_noise = xp.fft.rfft(white_noise[d,...,t])
+            noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
     noise = xp.array(noise)
+    print('done coloring noise')
 
     return noise
 
@@ -214,8 +259,8 @@ def get_real_field(field, N):
     OUTPUT: Real-space field (numpy array of size (dim, N, ..., N) with N repeated dim times)
     """
 
-    if len(GPUtil.getAvailable())>0:
-        xp = cp.get_array_module(ck)
+    if torch.cuda.is_available():
+        xp = cp.get_array_module(field)
     else:
         xp = np
 

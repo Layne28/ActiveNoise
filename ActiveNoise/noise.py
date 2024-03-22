@@ -1,10 +1,9 @@
 import numpy as np
 import os
-import GPUtil
 import sys
 import argparse
-import numba
-from numba import cuda
+import GPUtil
+
 if len(GPUtil.getAvailable())>0:
     import cupy as cp
 
@@ -14,25 +13,27 @@ def main():
     parser.add_argument('--N', default=400, help='linear system size')
     parser.add_argument('--do_output', default=0, help='whether to print noise field to file')
     parser.add_argument('--print_freq', default=100, help='how often to output noise configurations (in timesteps)')
+    parser.add_argument('--nsteps', default=100, help='number of timesteps')
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
 
     args = parser.parse_args()
     N = args.N
     do_output = args.do_output
     print_freq = args.print_freq
+    nsteps = args.nsteps
     xpu = args.xpu
 
     params = {}
 
-    params['N'] = N
+    params['N'] = int(N)
     params['dx'] = 1.0
     params['print_freq'] = 100
-    params['do_output'] = do_output
-    params['output_freq'] = print_freq
+    params['do_output'] = int(do_output)
+    params['output_freq'] = int(print_freq)
     params['lambda'] = 10.0
     params['tau'] = 1.0
     params['dim'] = 2
-    params['nsteps'] = 1000
+    params['nsteps'] = int(nsteps)
     params['dt'] = 1e-2
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
@@ -75,7 +76,7 @@ def gen_trajectory(**kwargs):
             print('Using CPU')
             xp = np
     else:
-        print('Using GPU')
+        print('Using CPU')
         xp = np
 
     if dim==1:
@@ -118,15 +119,24 @@ def run(init_fourier_arr, **kwargs):
             print('Using CPU')
             xp = np
     else:
-        print('Using GPU')
+        print('Using CPU')
         xp = np
 
+    '''
     if dim==1:
         traj_arr = xp.zeros((dim,N,nsteps))
     elif dim==2:
         traj_arr = xp.zeros((dim,N,N,nsteps))
     else:
         traj_arr = xp.zeros((dim,N,N,N,nsteps))
+    '''
+    
+    if dim==1:
+        traj_arr = xp.zeros((1,N//2+1,nsteps), dtype=xp.complex64)
+    elif dim==2:
+        traj_arr = xp.zeros((2,N,N//2+1,nsteps), dtype=xp.complex64)
+    else:
+        traj_arr = xp.zeros((3,N,N,N//2+1,nsteps), dtype=xp.complex64)
     
     ck = get_spatial_covariance(N, dx, dim, cov_type, Lambda, xpu)
     fourier_noise = init_fourier_arr
@@ -137,20 +147,26 @@ def run(init_fourier_arr, **kwargs):
         if n%print_freq==0:
             print('active noise step', n)
 
-        if n==0 and xp.count_nonzero(init_fourier_arr)==0:
+        if n==0: #and xp.count_nonzero(init_fourier_arr)==0:
             print('generating initial field')
             fourier_noise = xp.sqrt(D*L**dim)*spat_corr_field[...,n]#gen_field(N, dx, dim, ck)
-            real_noise = get_real_field(fourier_noise, N)
-            traj_arr[...,0] = real_noise
+            traj_arr[...,0] = fourier_noise
+            #real_noise = get_real_field(fourier_noise, N)
+            #traj_arr[...,0] = real_noise
 
         else:
             noise_incr = xp.sqrt(2*D*L**dim*dt/tau)*spat_corr_field[...,n]#gen_field(N, dx, dim, ck);
             fourier_noise = (1.0-dt/tau)*fourier_noise + noise_incr
-            real_noise = get_real_field(fourier_noise, N)
-            traj_arr[...,n] = real_noise
+            traj_arr[...,n] = fourier_noise
+            #real_noise = get_real_field(fourier_noise, N)
+            #traj_arr[...,n] = real_noise
 
         if do_output==1 and n%output_freq==0:
             xp.savez('data/field_%04d.npz' % n, real_noise)
+
+    #Take inverse fourier transform of noise trajectory    
+    print('computing FFT...')
+    traj = get_real_field(traj_arr, N)
 
     return traj_arr, fourier_noise
     #return traj_arr
@@ -229,11 +245,11 @@ def gen_field(N, dx, dim, nsteps, ck):
         xp = np
 
     if dim==1:
-        noise = xp.zeros((1,N//2+1,nsteps), dtype=xp.complex128)
+        noise = xp.zeros((1,N//2+1,nsteps), dtype=xp.complex64)
     elif dim==2:
-        noise = xp.zeros((2,N,N//2+1,nsteps), dtype=xp.complex128)
+        noise = xp.zeros((2,N,N//2+1,nsteps), dtype=xp.complex64)
     else:
-        noise = xp.zeros((3,N,N,N//2+1,nsteps), dtype=xp.complex128)
+        noise = xp.zeros((3,N,N,N//2+1,nsteps), dtype=xp.complex64)
 
     print([dim] + [N]*dim + [nsteps])
     print('generating big white noise array...')
@@ -256,7 +272,7 @@ def get_real_field(field, N):
     INPUT: Fourier-space field (numpy array),
            linear size of field (int)
 
-    OUTPUT: Real-space field (numpy array of size (dim, N, ..., N) with N repeated dim times)
+    OUTPUT: Real-space field (numpy array of size (dim, N, ..., N, nsteps) with N repeated dim times)
     """
 
     if len(GPUtil.getAvailable())>0:
@@ -265,19 +281,20 @@ def get_real_field(field, N):
         xp = np
 
     dim = field.shape[0]
+    nsteps = field.shape[-1]
 
     if dim==1:
-        real_field = xp.zeros((1,N))
-        real_field[0] = xp.fft.irfft(field)
+        real_field = xp.zeros((1,N,nsteps))
+        real_field[0] = xp.fft.irfft(field, axis=0)
     elif dim==2:
-        real_field = xp.zeros((2,N,N))
-        real_field[0] = xp.fft.irfft2(field[0,:,:])
-        real_field[1] = xp.fft.irfft2(field[1,:,:])
+        real_field = xp.zeros((2,N,N,nsteps))
+        real_field[0] = xp.fft.irfft2(field[0,...], axes=(0,1))
+        real_field[1] = xp.fft.irfft2(field[1,...], axes=(0,1))
     else:
-        real_field = xp.zeros((3,N,N,N))
-        real_field[0] = xp.fft.irfftn(field[0,:,:,:])
-        real_field[1] = xp.fft.irfftn(field[1,:,:,:])
-        real_field[2] = xp.fft.irfftn(field[2,:,:,:])
+        real_field = xp.zeros((3,N,N,N,nsteps))
+        real_field[0] = xp.fft.irfftn(field[0,...], axes=(0,1,2))
+        real_field[1] = xp.fft.irfftn(field[1,...], axes=(0,1,2))
+        real_field[2] = xp.fft.irfftn(field[2,...], axes=(0,1,2))
 
     real_field = xp.array(real_field)
     return real_field
