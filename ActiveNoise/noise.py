@@ -187,8 +187,8 @@ def run(init_fourier_arr, **kwargs):
         #print('computing FFT...')
         traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = xp.asnumpy(get_real_field(fourier_arr, N))
 
-    print(traj_arr.shape)
-    print('rms noise: %f' % np.sqrt(np.average(traj_arr**2)))
+    #print(traj_arr.shape)
+    #print('rms noise: %f' % np.sqrt(np.average(traj_arr**2)))
     return traj_arr, fourier_noise
     #return traj_arr
 

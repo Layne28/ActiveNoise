@@ -14,8 +14,8 @@ def main():
     parser.add_argument('--do_output', default=0, help='whether to print noise field to file')
     parser.add_argument('--print_freq', default=100, help='how often to print information (in timesteps)')
     parser.add_argument('--output_freq', default=100, help='how often to output noise configurations (in timesteps)')
-    parser.add_argument('--nsteps', default=5000, help='number of timesteps')
-    parser.add_argument('--chunksize', default=500, help='how big to make chunks of random numbers (in timesteps)')
+    parser.add_argument('--nsteps', default=500, help='number of timesteps')
+    parser.add_argument('--chunksize', default=50, help='how big to make chunks of random numbers (in timesteps)')
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
 
     args = parser.parse_args()
@@ -34,7 +34,7 @@ def main():
     params['print_freq'] = int(print_freq)
     params['do_output'] = int(do_output)
     params['output_freq'] = int(output_freq)
-    params['lambda'] = 10.0
+    params['lambda'] = 1.0
     params['tau'] = 1.0
     params['dim'] = 2
     params['nsteps'] = int(nsteps)
@@ -43,7 +43,7 @@ def main():
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
     params['xpu'] = xpu
-    parmas['verbose'] = True
+    params['verbose'] = True
 
     gen_trajectory(**params)
 
@@ -187,6 +187,8 @@ def run(init_fourier_arr, **kwargs):
         #print('computing FFT...')
         traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = xp.asnumpy(get_real_field(fourier_arr, N))
 
+    #print(traj_arr.shape)
+    #print('rms noise: %f' % np.sqrt(np.average(traj_arr**2)))
     return traj_arr, fourier_noise
     #return traj_arr
 
@@ -243,6 +245,7 @@ def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
     else:
         ck = 0.0*kx
     ck = ck/(xp.sum(ck)*(N*dx)**dim)
+    #print(np.sum(ck)/(N*dx)**dim)
 
     return ck
 
@@ -277,8 +280,16 @@ def gen_field(N, dx, dim, nsteps, ck):
 
     for t in range(nsteps):
         for d in range(dim):
-            fourier_white_noise = xp.fft.rfft(white_noise[d,...,t])
-            noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
+            if dim==1:
+                fourier_white_noise = xp.fft.rfft(white_noise[d,...,t], axis=0)
+                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
+            elif dim==2:
+                fourier_white_noise = xp.fft.rfft2(white_noise[d,...,t], axes=(0,1))
+                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
+            else:
+                fourier_white_noise = xp.fft.rfftn(white_noise[d,...,t], axes=(0,1,2))
+                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
+            
     noise = xp.array(noise)
     #print('done coloring noise')
 
