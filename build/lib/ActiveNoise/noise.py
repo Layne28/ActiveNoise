@@ -2,10 +2,13 @@ import numpy as np
 import os
 import sys
 import argparse
-import GPUtil
+#import GPUtil
 
-if len(GPUtil.getAvailable())>0:
+try:
     import cupy as cp
+    CUPY_IMPORTED = True
+except ImportError:
+    CUPY_IMPORTED = False
 
 def main():
 
@@ -76,7 +79,7 @@ def gen_trajectory(**kwargs):
     if not os.path.exists('./data') and do_output==1:
         os.makedirs('./data')
 
-    if len(GPUtil.getAvailable())>0:
+    if CUPY_IMPORTED:
         if xpu=='gpu':
             print('Using GPU')
             xp = cp
@@ -123,7 +126,7 @@ def run(init_fourier_arr, **kwargs):
     L = N*dx
     nchunks = nsteps//chunksize
 
-    if len(GPUtil.getAvailable())>0:
+    if CUPY_IMPORTED:
         if xpu=='gpu':
             if verbose:
                 print('Using GPU for active noise')
@@ -154,8 +157,10 @@ def run(init_fourier_arr, **kwargs):
         fourier_noise = xp.sqrt(D*L**dim)*spat_corr_field[...,0]
 
     #Put in step 0 because hoomd requires it for multiple runs
-    traj_arr[...,0] = xp.asnumpy(get_real_field(fourier_noise[...,np.newaxis], N)[...,0])
-
+    if xp==np:
+        traj_arr[...,0] = get_real_field(fourier_noise[...,np.newaxis], N)[...,0]
+    else: 
+        traj_arr[...,0] = xp.asnumpy(get_real_field(fourier_noise[...,np.newaxis], N)[...,0])
 
     for c in range(nchunks):
 
@@ -185,8 +190,11 @@ def run(init_fourier_arr, **kwargs):
 
         #Take inverse fourier transform of noise trajectory    
         #print('computing FFT...')
-        traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = xp.asnumpy(get_real_field(fourier_arr, N))
-
+        if xp==np:
+            traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = get_real_field(fourier_arr, N)
+        else:
+            traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = xp.asnumpy(get_real_field(fourier_arr, N))
+            
     #print(traj_arr.shape)
     #print('rms noise: %f' % np.sqrt(np.average(traj_arr**2)))
     return traj_arr, fourier_noise
@@ -205,7 +213,7 @@ def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
     OUTPUT: Numpy array containing spatial correlation at each wavevector
     """
 
-    if len(GPUtil.getAvailable())>0:
+    if CUPY_IMPORTED:
         if xpu=='gpu':
             xp = cp
         else:
@@ -261,7 +269,7 @@ def gen_field(N, dx, dim, nsteps, ck):
     OUTPUT: Noise field (numpy array of size (dim, N, ..., N/2+1, nsteps) with N repeated dim-1 times)
     """
 
-    if len(GPUtil.getAvailable())>0:
+    if CUPY_IMPORTED:
         xp = cp.get_array_module(ck)
     else:
         xp = np
@@ -305,7 +313,7 @@ def get_real_field(field, N):
     OUTPUT: Real-space field (numpy array of size (dim, N, ..., N, nsteps) with N repeated dim times)
     """
 
-    if len(GPUtil.getAvailable())>0:
+    if CUPY_IMPORTED:
         xp = cp.get_array_module(field)
     else:
         xp = np
