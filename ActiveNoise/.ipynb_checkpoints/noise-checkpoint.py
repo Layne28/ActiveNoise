@@ -13,9 +13,7 @@ except ImportError:
 def main():
 
     parser = argparse.ArgumentParser(description='Generate active noise trajectory')
-    parser.add_argument('--Nx', default=50, help='linear system size')
-    parser.add_argument('--Ny', default=100, help='linear system size')
-    parser.add_argument('--dim', default=2, help='dimensionality (1,2,3)')
+    parser.add_argument('--N', default=400, help='linear system size')
     parser.add_argument('--do_output', default=0, help='whether to print noise field to file')
     parser.add_argument('--print_freq', default=100, help='how often to print information (in timesteps)')
     parser.add_argument('--output_freq', default=100, help='how often to output noise configurations (in timesteps)')
@@ -24,8 +22,7 @@ def main():
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
 
     args = parser.parse_args()
-    Nx = args.Nx
-    Ny = args.Ny
+    N = args.N
     do_output = args.do_output
     print_freq = args.print_freq
     output_freq = args.output_freq
@@ -35,11 +32,8 @@ def main():
 
     params = {}
 
-    #params['N'] = int(N)
-    params['Nx'] = Nx
-    params['Ny'] = Ny
+    params['N'] = int(N)
     params['dx'] = 1.0
-    params['dy'] = 0.5
     params['print_freq'] = int(print_freq)
     params['do_output'] = int(do_output)
     params['output_freq'] = int(output_freq)
@@ -65,31 +59,14 @@ def gen_trajectory(**kwargs):
     OUTPUT: last noise field in trajectory (numpy array)
     """
 
-    dim = kwargs['dim']
-    if 'N' in kwargs:
-        Nx = kwargs['N']
-        Ny = kwargs['N']
-        Nz = kwargs['N']
-    else:
-        Nx = kwargs['Nx']
-        if dim>1:
-            Ny = kwargs['Ny']
-        if dim>2:
-            Nz = kwargs['Nz']
+    N = kwargs['N']
     dx = kwargs['dx']
-    if 'dy' in kwargs:
-        dy = kwargs['dy']
-    else:
-        dy = dx
-    if 'dz' in kwargs:
-        dz = kwargs['dz']
-    else:
-        dz = dx
     print_freq = kwargs['print_freq']
     do_output = kwargs['do_output']
     output_freq = kwargs['output_freq']
     Lambda = kwargs['lambda']
-    tau = kwargs['tau'] 
+    tau = kwargs['tau']
+    dim = kwargs['dim']
     nsteps = kwargs['nsteps']
     chunksize = kwargs['chunksize']
     dt = kwargs['dt']
@@ -129,31 +106,14 @@ def gen_trajectory(**kwargs):
 
 def run(init_fourier_arr, **kwargs):
 
-    dim = kwargs['dim']
-    if 'N' in kwargs:
-        Nx = kwargs['N']
-        Ny = kwargs['N']
-        Nz = kwargs['N']
-    else:
-        Nx = kwargs['Nx']
-        if dim>1:
-            Ny = kwargs['Ny']
-        if dim>2:
-            Nz = kwargs['Nz']
+    N = kwargs['N']
     dx = kwargs['dx']
-    if 'dy' in kwargs:
-        dy = kwargs['dy']
-    else:
-        dy = dx
-    if 'dz' in kwargs:
-        dz = kwargs['dz']
-    else:
-        dz = dx
     print_freq = kwargs['print_freq']
     do_output = kwargs['do_output']
     output_freq = kwargs['output_freq']
     Lambda = kwargs['lambda']
-    tau = kwargs['tau'] 
+    tau = kwargs['tau']
+    dim = kwargs['dim']
     nsteps = kwargs['nsteps']
     chunksize = kwargs['chunksize']
     dt = kwargs['dt']
@@ -163,11 +123,7 @@ def run(init_fourier_arr, **kwargs):
     verbose = kwargs['verbose']
 
     #derived variables
-    Lx = Nx*dx
-    if dim>1:
-        Ly = Ny*dy
-    if dim>2:
-        Lz = Nz*dz
+    L = N*dx
     nchunks = nsteps//chunksize
 
     if CUPY_IMPORTED:
@@ -186,51 +142,38 @@ def run(init_fourier_arr, **kwargs):
 
 
     if dim==1:
-        traj_arr = np.zeros((dim,Nx,nsteps+1))
+        traj_arr = np.zeros((dim,N,nsteps+1))
     elif dim==2:
-        traj_arr = np.zeros((dim,Nx,Ny,nsteps+1))
+        traj_arr = np.zeros((dim,N,N,nsteps+1))
     else:
-        traj_arr = np.zeros((dim,Nx,Ny,Nz,nsteps+1))
+        traj_arr = np.zeros((dim,N,N,N,nsteps+1))
 
-    if dim==1:
-        Narr = np.array([Nx])
-        dxarr = np.array([dx])
-        vol = Lx
-    elif dim==2:
-        Narr = np.array([Nx,Ny])
-        dxarr = np.array([dx,dy])
-        vol = Lx*Ly
-    else:
-        Narr = np.array([Nx,Ny,Nz])
-        dxarr = np.array([dx,dy,dz])
-        vol = Lx*Ly*Lz
-
-    ck = get_spatial_covariance(Narr, dxarr, dim, cov_type, Lambda, xpu)
+    ck = get_spatial_covariance(N, dx, dim, cov_type, Lambda, xpu)
     fourier_noise = init_fourier_arr
 
     #Generate a random field if init array is empty
     if fourier_noise.size==0:
-        spat_corr_field = gen_field(Narr, dxarr, dim, 1, ck)
-        fourier_noise = xp.sqrt(D*vol)*spat_corr_field[...,0]
+        spat_corr_field = gen_field(N, dx, dim, 1, ck)
+        fourier_noise = xp.sqrt(D*L**dim)*spat_corr_field[...,0]
 
     #Put in step 0 because hoomd requires it for multiple runs
     if xp==np:
-        traj_arr[...,0] = get_real_field(fourier_noise[...,np.newaxis], Narr)[...,0]
+        traj_arr[...,0] = get_real_field(fourier_noise[...,np.newaxis], N)[...,0]
     else: 
-        traj_arr[...,0] = xp.asnumpy(get_real_field(fourier_noise[...,np.newaxis], Narr)[...,0])
+        traj_arr[...,0] = xp.asnumpy(get_real_field(fourier_noise[...,np.newaxis], N)[...,0])
 
     for c in range(nchunks):
 
         #print('chunk', c)
 
         if dim==1:
-            fourier_arr = xp.zeros((1,Nx//2+1,chunksize), dtype=xp.complex64)
+            fourier_arr = xp.zeros((1,N//2+1,chunksize), dtype=xp.complex64)
         elif dim==2:
-            fourier_arr = xp.zeros((2,Nx,Ny//2+1,chunksize), dtype=xp.complex64)
+            fourier_arr = xp.zeros((2,N,N//2+1,chunksize), dtype=xp.complex64)
         else:
-            fourier_arr = xp.zeros((3,Nx,Ny,Nz//2+1,chunksize), dtype=xp.complex64)
+            fourier_arr = xp.zeros((3,N,N,N//2+1,chunksize), dtype=xp.complex64)
             
-        spat_corr_field = gen_field(Narr, dxarr, dim, chunksize, ck)
+        spat_corr_field = gen_field(N, dx, dim, chunksize, ck)
 
         #print(chunksize)
         for n in range(chunksize):
@@ -238,7 +181,7 @@ def run(init_fourier_arr, **kwargs):
             if n%print_freq==0 and verbose:
                 print('active noise step', n)
 
-            noise_incr = xp.sqrt(2*D*vol*dt/tau)*spat_corr_field[...,n]
+            noise_incr = xp.sqrt(2*D*L**dim*dt/tau)*spat_corr_field[...,n]
             fourier_noise = (1.0-dt/tau)*fourier_noise + noise_incr
             fourier_arr[...,n] = fourier_noise
 
@@ -248,22 +191,22 @@ def run(init_fourier_arr, **kwargs):
         #Take inverse fourier transform of noise trajectory    
         #print('computing FFT...')
         if xp==np:
-            traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = get_real_field(fourier_arr, Narr)
+            traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = get_real_field(fourier_arr, N)
         else:
-            traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = xp.asnumpy(get_real_field(fourier_arr, Narr))
+            traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = xp.asnumpy(get_real_field(fourier_arr, N))
             
     #print(traj_arr.shape)
     #print('rms noise: %f' % np.sqrt(np.average(traj_arr**2)))
     return traj_arr, fourier_noise
     #return traj_arr
 
-def get_spatial_covariance(Narr, dxarr, dim, cov_type, l, xpu):
+def get_spatial_covariance(N, dx, dim, cov_type, l, xpu):
 
     """Create a matrix containing the spatial covariance function
     at each allowed wavevector.
 
-    INPUT: Size of noise field (int array),
-           grid spacing (int array)
+    INPUT: Linear size of noise field (int),
+           grid spacing (float)
            dimensions (int),
            mathematical form of covariance function (string),
            correlation length (float)
@@ -279,25 +222,18 @@ def get_spatial_covariance(Narr, dxarr, dim, cov_type, l, xpu):
         xp = np
  
     #Define wavevectors
-    myvecs = []
-    for d in range(dim):
-        myvec = xp.zeros(Narr[d])
-        for i in range(Narr[d]//2+1):
-            myvec[i] = i
-        for i in range(Narr[d]//2+1,Narr[d]):
-            myvec[i] = i-Narr[d]
-        kvec = 2*xp.pi/(Narr[d]*dxarr[d])*myvec
-        myvecs.append(kvec)
+    myvec = xp.zeros(N)
+    for i in range(N//2+1):
+        myvec[i] = i
+    for i in range(N//2+1,N):
+        myvec[i] = i-N
+    kvec = 2*xp.pi/(N*dx)*myvec
     if dim==1:
-        kx = myvecs[0]
+        kx = kvec
     elif dim==2:
-        kx, ky = xp.meshgrid(myvecs[0], myvecs[1], indexing='ij')
+        kx, ky = xp.meshgrid(kvec, kvec)
     else:
-        kx, ky, kz = xp.meshgrid(myvecs[0], myvecs[1], myvecs[2], indexing='ij')
-
-    vol = 1.0
-    for d in range(dim):
-        vol *= Narr[d]*dxarr[d]
+        kx, ky, kz = xp.meshgrid(kvec, kvec, kvec)
 
     #Get spatial correlation function
     if cov_type=='exponential':
@@ -316,12 +252,12 @@ def get_spatial_covariance(Narr, dxarr, dim, cov_type, l, xpu):
             ck = xp.exp(-l**2*(kx**2+ky**2+kz**2)/2.0)
     else:
         ck = 0.0*kx
-    ck = ck/(xp.sum(ck)*vol)
+    ck = ck/(xp.sum(ck)*(N*dx)**dim)
     #print(np.sum(ck)/(N*dx)**dim)
 
     return ck
 
-def gen_field(Narr, dxarr, dim, nsteps, ck):
+def gen_field(N, dx, dim, nsteps, ck):
 
     """Create a spatially correlated noise field in Fourier space
 
@@ -339,40 +275,35 @@ def gen_field(Narr, dxarr, dim, nsteps, ck):
         xp = np
 
     if dim==1:
-        noise = xp.zeros((1,Narr[0]//2+1,nsteps), dtype=xp.complex64)
+        noise = xp.zeros((1,N//2+1,nsteps), dtype=xp.complex64)
     elif dim==2:
-        noise = xp.zeros((2,Narr[0],Narr[1]//2+1,nsteps), dtype=xp.complex64)
+        noise = xp.zeros((2,N,N//2+1,nsteps), dtype=xp.complex64)
     else:
-        noise = xp.zeros((3,Narr[0],Narr[1],Narr[2]//2+1,nsteps), dtype=xp.complex64)
+        noise = xp.zeros((3,N,N,N//2+1,nsteps), dtype=xp.complex64)
 
     #print([dim] + [N]*dim + [nsteps])
     #print('generating big white noise array...')
-    if dim==1:
-        white_noise = xp.sqrt(Narr[0])*xp.random.normal(loc=0.0, scale=1.0, size=tuple([dim] + [Narr[0]] + [nsteps]))
-    elif dim==2:
-        white_noise = xp.sqrt(Narr[0]*Narr[1])*xp.random.normal(loc=0.0, scale=1.0, size=tuple([dim] + [Narr[0]] + [Narr[1]] + [nsteps]))
-    else:
-        white_noise = xp.sqrt(Narr[0]*Narr[1]*Narr[2])*xp.random.normal(loc=0.0, scale=1.0, size=tuple([dim] + [Narr[0]] + [Narr[1]] + [Narr[2]] + [nsteps]))
+    white_noise = xp.sqrt(N**dim)*xp.random.normal(loc=0.0, scale=1.0, size=tuple([dim] + [N]*dim + [nsteps]))
     #print('done')
 
     for t in range(nsteps):
         for d in range(dim):
             if dim==1:
                 fourier_white_noise = xp.fft.rfft(white_noise[d,...,t], axis=0)
-                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(Narr[-1]//2+1)]), fourier_white_noise)
+                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
             elif dim==2:
                 fourier_white_noise = xp.fft.rfft2(white_noise[d,...,t], axes=(0,1))
-                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(Narr[-1]//2+1)]), fourier_white_noise)
+                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
             else:
                 fourier_white_noise = xp.fft.rfftn(white_noise[d,...,t], axes=(0,1,2))
-                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(Narr[-1]//2+1)]), fourier_white_noise)
+                noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(N//2+1)]), fourier_white_noise)
             
     noise = xp.array(noise)
     #print('done coloring noise')
 
     return noise
 
-def get_real_field(field, Narr):
+def get_real_field(field, N):
 
     """Transform fourier space field to real space
 
@@ -391,14 +322,14 @@ def get_real_field(field, Narr):
     nsteps = field.shape[-1]
 
     if dim==1:
-        real_field = xp.zeros((1,Narr[0],nsteps))
+        real_field = xp.zeros((1,N,nsteps))
         real_field[0] = xp.fft.irfft(field, axis=0)
     elif dim==2:
-        real_field = xp.zeros((2,Narr[0],Narr[1],nsteps))
+        real_field = xp.zeros((2,N,N,nsteps))
         real_field[0] = xp.fft.irfft2(field[0,...], axes=(0,1))
         real_field[1] = xp.fft.irfft2(field[1,...], axes=(0,1))
     else:
-        real_field = xp.zeros((3,Narr[0],Narr[1],Narr[2],nsteps))
+        real_field = xp.zeros((3,N,N,N,nsteps))
         real_field[0] = xp.fft.irfftn(field[0,...], axes=(0,1,2))
         real_field[1] = xp.fft.irfftn(field[1,...], axes=(0,1,2))
         real_field[2] = xp.fft.irfftn(field[2,...], axes=(0,1,2))
