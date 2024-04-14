@@ -16,9 +16,9 @@ def main():
     parser.add_argument('--Nx', default=50, help='linear system size')
     parser.add_argument('--Ny', default=100, help='linear system size')
     parser.add_argument('--dim', default=2, help='dimensionality (1,2,3)')
-    parser.add_argument('--do_output', default=0, help='whether to print noise field to file')
-    parser.add_argument('--print_freq', default=100, help='how often to print information (in timesteps)')
-    parser.add_argument('--output_freq', default=100, help='how often to output noise configurations (in timesteps)')
+    parser.add_argument('--do_output', default=1, help='whether to print noise field to file')
+    parser.add_argument('--print_freq', default=10, help='how often to print information (in timesteps)')
+    parser.add_argument('--output_freq', default=10, help='how often to output noise configurations (in timesteps)')
     parser.add_argument('--nsteps', default=500, help='number of timesteps')
     parser.add_argument('--chunksize', default=50, help='how big to make chunks of random numbers (in timesteps)')
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
@@ -242,15 +242,15 @@ def run(init_fourier_arr, **kwargs):
             fourier_noise = (1.0-dt/tau)*fourier_noise + noise_incr
             fourier_arr[...,n] = fourier_noise
 
-            #if do_output==1 and n%output_freq==0:
-            #    xp.savez('data/field_%04d.npz' % (n+c*chunksize), real_noise)
-
         #Take inverse fourier transform of noise trajectory    
         #print('computing FFT...')
         if xp==np:
             traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = get_real_field(fourier_arr, Narr)
         else:
             traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)] = xp.asnumpy(get_real_field(fourier_arr, Narr))
+
+        if do_output==1:
+            xp.savez('data/field_%04d.npz' % (c*chunksize), traj_arr[...,(c*chunksize+1):((c+1)*chunksize+1)])
             
     #print(traj_arr.shape)
     #print('rms noise: %f' % np.sqrt(np.average(traj_arr**2)))
