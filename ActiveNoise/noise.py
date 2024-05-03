@@ -14,12 +14,12 @@ def main():
 
     parser = argparse.ArgumentParser(description='Generate active noise trajectory')
     parser.add_argument('--Nx', default=50, help='linear system size')
-    parser.add_argument('--Ny', default=100, help='linear system size')
+    parser.add_argument('--Ny', default=50, help='linear system size')
     parser.add_argument('--dim', default=2, help='dimensionality (1,2,3)')
     parser.add_argument('--do_output', default=1, help='whether to print noise field to file')
     parser.add_argument('--print_freq', default=10, help='how often to print information (in timesteps)')
     parser.add_argument('--output_freq', default=10, help='how often to output noise configurations (in timesteps)')
-    parser.add_argument('--nsteps', default=500, help='number of timesteps')
+    parser.add_argument('--nsteps', default=1, help='number of timesteps')
     parser.add_argument('--chunksize', default=50, help='how big to make chunks of random numbers (in timesteps)')
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
 
@@ -51,6 +51,7 @@ def main():
     params['dt'] = 1e-2
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
+    params['compressibility'] = 'incompressible'
     params['xpu'] = xpu
     params['verbose'] = True
 
@@ -95,6 +96,7 @@ def gen_trajectory(**kwargs):
     dt = kwargs['dt']
     D = kwargs['D']
     cov_type = kwargs['cov_type']
+    compressibility = kwargs['compressibility']
     xpu = kwargs['xpu']
     verbose = kwargs['verbose']
 
@@ -159,6 +161,7 @@ def run(init_fourier_arr, **kwargs):
     dt = kwargs['dt']
     D = kwargs['D']
     cov_type = kwargs['cov_type']
+    compressibility = kwargs['compressibility']
     xpu = kwargs['xpu']
     verbose = kwargs['verbose']
 
@@ -210,7 +213,7 @@ def run(init_fourier_arr, **kwargs):
 
     #Generate a random field if init array is empty
     if fourier_noise.size==0:
-        spat_corr_field = gen_field(Narr, dxarr, dim, 1, ck)
+        spat_corr_field = gen_field(Narr, dxarr, dim, 1, ck, compressibility)
         fourier_noise = xp.sqrt(D*vol)*spat_corr_field[...,0]
 
     #Put in step 0 because hoomd requires it for multiple runs
@@ -230,7 +233,7 @@ def run(init_fourier_arr, **kwargs):
         else:
             fourier_arr = xp.zeros((3,Nx,Ny,Nz//2+1,chunksize), dtype=xp.complex64)
             
-        spat_corr_field = gen_field(Narr, dxarr, dim, chunksize, ck)
+        spat_corr_field = gen_field(Narr, dxarr, dim, chunksize, ck, compressibility)
 
         #print(chunksize)
         for n in range(chunksize):
@@ -321,14 +324,15 @@ def get_spatial_covariance(Narr, dxarr, dim, cov_type, l, xpu):
 
     return ck
 
-def gen_field(Narr, dxarr, dim, nsteps, ck):
+def gen_field(Narr, dxarr, dim, nsteps, ck, compressibility):
 
     """Create a spatially correlated noise field in Fourier space
 
     INPUT: Linear size of field (int),
            dimension of field (int),
            number of time steps (int),
-           spatial correlation function (numpy array)
+           spatial correlation function (numpy array),
+           compressibility (string)
 
     OUTPUT: Noise field (numpy array of size (dim, N, ..., N/2+1, nsteps) with N repeated dim-1 times)
     """
@@ -355,6 +359,26 @@ def gen_field(Narr, dxarr, dim, nsteps, ck):
         white_noise = xp.sqrt(Narr[0]*Narr[1]*Narr[2])*xp.random.normal(loc=0.0, scale=1.0, size=tuple([dim] + [Narr[0]] + [Narr[1]] + [Narr[2]] + [nsteps]))
     #print('done')
 
+    if compressibility=='incompressible':
+        #Define wavevectors
+        myvecs = []
+        for d in range(dim):
+            myvec = xp.zeros(Narr[d])
+            for i in range(Narr[d]//2+1):
+                myvec[i] = i
+            for i in range(Narr[d]//2+1,Narr[d]):
+                myvec[i] = i-Narr[d]
+            kvec = 2*xp.pi/(Narr[d]*dxarr[d])*myvec
+            myvecs.append(kvec)
+        if dim==1:
+            kx = myvecs[0]
+        elif dim==2:
+            kx, ky = xp.meshgrid(myvecs[0], myvecs[1], indexing='ij')
+            kmat = np.stack((kx, ky), axis=-1)
+        else:
+            kx, ky, kz = xp.meshgrid(myvecs[0], myvecs[1], myvecs[2], indexing='ij')
+            kmat = np.stack((kx, ky, kz), axis=-1)
+
     for t in range(nsteps):
         for d in range(dim):
             if dim==1:
@@ -366,6 +390,15 @@ def gen_field(Narr, dxarr, dim, nsteps, ck):
             else:
                 fourier_white_noise = xp.fft.rfftn(white_noise[d,...,t], axes=(0,1,2))
                 noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(Narr[-1]//2+1)]), fourier_white_noise)
+        if compressibility=='incompressible':
+            #projector = np.identity(dim)
+            if dim==1:
+                print('WARNING: incompressibility invalid in 1d. Not doing projection.')
+            elif dim==2:
+                k2mat = np.einsum('ij,ik->ijk', kmat, kmat)
+                
+                print(k2mat.shape)
+                #denom = 
             
     noise = xp.array(noise)
     #print('done coloring noise')
