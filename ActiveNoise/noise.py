@@ -15,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description='Generate active noise trajectory')
     parser.add_argument('--Nx', default=50, help='linear system size')
     parser.add_argument('--Ny', default=50, help='linear system size')
+    parser.add_argument('--Nz', default=50, help='linear system size')
     parser.add_argument('--dim', default=2, help='dimensionality (1,2,3)')
     parser.add_argument('--do_output', default=1, help='whether to print noise field to file')
     parser.add_argument('--print_freq', default=10, help='how often to print information (in timesteps)')
@@ -26,18 +27,21 @@ def main():
     args = parser.parse_args()
     Nx = args.Nx
     Ny = args.Ny
+    Nz = args.Nz
     do_output = args.do_output
     print_freq = args.print_freq
     output_freq = args.output_freq
     chunksize = args.chunksize
     nsteps = args.nsteps
     xpu = args.xpu
+    dim = int(args.dim)
 
     params = {}
 
     #params['N'] = int(N)
     params['Nx'] = Nx
     params['Ny'] = Ny
+    params['Nz'] = Nz
     params['dx'] = 1.0
     params['dy'] = 0.5
     params['print_freq'] = int(print_freq)
@@ -45,7 +49,7 @@ def main():
     params['output_freq'] = int(output_freq)
     params['lambda'] = 1.0
     params['tau'] = 1.0
-    params['dim'] = 2
+    params['dim'] = dim
     params['nsteps'] = int(nsteps)
     params['chunksize'] = int(chunksize)
     params['dt'] = 1e-2
@@ -395,10 +399,41 @@ def gen_field(Narr, dxarr, dim, nsteps, ck, compressibility):
             if dim==1:
                 print('WARNING: incompressibility invalid in 1d. Not doing projection.')
             elif dim==2:
-                k2mat = np.einsum('ij,ik->ijk', kmat, kmat)
-                
-                print(k2mat.shape)
-                #denom = 
+                k2 = xp.einsum('ijk,ijk->ij', kmat, kmat)
+                #print(k2.shape)
+                k2mat = xp.einsum('ijk,ijl->ijkl', kmat/np.sqrt(k2[:,:,None]), kmat/np.sqrt(k2[:,:,None]))
+                k2mat = xp.nan_to_num(k2mat) #corrects for dividing by k=0
+                id = xp.zeros(k2mat.shape)
+                for i in range(dim):
+                    for j in range(dim):
+                        if i==j:
+                            id[:,:,i,j] = 1
+                        else:
+                            id[:,:,i,j] = 0
+                projector = id-k2mat
+                projector = projector[:,:(Narr[-1]//2+1),:,:]
+                k2mat = k2mat[:,:(Narr[-1]//2+1),:,:]
+                #print(noise[...,t].shape)
+                noise[...,t] = np.einsum('ijkl,lij->kij', projector, noise[...,t])
+                #print(np.max(np.abs(np.einsum('ijkl,lij->kij', k2mat, noise[...,t])))) #this should be very small
+            else:
+                k2 = xp.einsum('ijkl,ijkl->ijk', kmat, kmat)
+                #print(k2.shape)
+                k2mat = xp.einsum('ijkl,ijkm->ijklm', kmat/np.sqrt(k2[:,:,:,None]), kmat/np.sqrt(k2[:,:,:,None]))
+                k2mat = xp.nan_to_num(k2mat) #corrects for dividing by k=0
+                id = xp.zeros(k2mat.shape)
+                for i in range(dim):
+                    for j in range(dim):
+                        if i==j:
+                            id[:,:,:,i,j] = 1
+                        else:
+                            id[:,:,:,i,j] = 0
+                projector = id-k2mat
+                projector = projector[:,:,:(Narr[-1]//2+1),:,:]
+                k2mat = k2mat[:,:,:(Narr[-1]//2+1),:,:]
+                #print(noise[...,t].shape)
+                noise[...,t] = np.einsum('ijklm,mijk->lijk', projector, noise[...,t])
+                #print(np.max(np.abs(np.einsum('ijklm,mijk->lijk', k2mat, noise[...,t])))) #this should be very small
             
     noise = xp.array(noise)
     #print('done coloring noise')
