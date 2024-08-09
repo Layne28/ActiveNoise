@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--nsteps', default=1, help='number of timesteps')
     parser.add_argument('--chunksize', default=50, help='how big to make chunks of random numbers (in timesteps)')
     parser.add_argument('--xpu', default='gpu', help='cpu or gpu')
+    parser.add_argument('--seed', default=1, help='random seed')
 
     args = parser.parse_args()
     Nx = args.Nx
@@ -333,10 +334,10 @@ def gen_field(Narr, dxarr, dim, nsteps, ck, compressibility):
     """Create a spatially correlated noise field in Fourier space
 
     INPUT: Linear size of field (int),
-           dimension of field (int),
-           number of time steps (int),
-           spatial correlation function (numpy array),
-           compressibility (string)
+        dimension of field (int),
+        number of time steps (int),
+        spatial correlation function (numpy array),
+        compressibility (string)
 
     OUTPUT: Noise field (numpy array of size (dim, N, ..., N/2+1, nsteps) with N repeated dim-1 times)
     """
@@ -445,7 +446,7 @@ def get_real_field(field, Narr):
     """Transform fourier space field to real space
 
     INPUT: Fourier-space field (numpy array),
-           linear size of field (int)
+        linear size of field (int)
 
     OUTPUT: Real-space field (numpy array of size (dim, N, ..., N, nsteps) with N repeated dim times)
     """

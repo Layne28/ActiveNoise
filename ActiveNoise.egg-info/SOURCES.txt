@@ -1,5 +1,6 @@
 README.md
 setup.py
+ActiveNoise/ActiveNoiseGenerator.py
 ActiveNoise/__init__.py
 ActiveNoise/noise.py
 ActiveNoise/plot_traj.py
