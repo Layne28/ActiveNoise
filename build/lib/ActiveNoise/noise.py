@@ -60,7 +60,7 @@ def main():
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
     params['compressibility'] = 'incompressible'
-    params['compressibility'] = 'incompressible'
+    params['do_lattice_correction'] = True
     params['xpu'] = xpu
     params['verbose'] = True
 
