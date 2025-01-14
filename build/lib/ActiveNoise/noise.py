@@ -36,12 +36,14 @@ def main():
     nsteps = args.nsteps
     xpu = args.xpu
     dim = int(args.dim)
+    dim = int(args.dim)
 
     params = {}
 
     #params['N'] = int(N)
     params['Nx'] = Nx
     params['Ny'] = Ny
+    params['Nz'] = Nz
     params['Nz'] = Nz
     params['dx'] = 1.0
     params['dy'] = 0.5
@@ -51,12 +53,14 @@ def main():
     params['lambda'] = 1.0
     params['tau'] = 1.0
     params['dim'] = dim
+    params['dim'] = dim
     params['nsteps'] = int(nsteps)
     params['chunksize'] = int(chunksize)
     params['dt'] = 1e-2
     params['D'] = 1.0
     params['cov_type'] = 'exponential'
     params['compressibility'] = 'incompressible'
+    params['do_lattice_correction'] = True
     params['xpu'] = xpu
     params['verbose'] = True
 
@@ -384,6 +388,26 @@ def gen_field(Narr, dxarr, dim, nsteps, ck, compressibility):
             kx, ky, kz = xp.meshgrid(myvecs[0], myvecs[1], myvecs[2], indexing='ij')
             kmat = np.stack((kx, ky, kz), axis=-1)
 
+    if compressibility=='incompressible':
+        #Define wavevectors
+        myvecs = []
+        for d in range(dim):
+            myvec = xp.zeros(Narr[d])
+            for i in range(Narr[d]//2+1):
+                myvec[i] = i
+            for i in range(Narr[d]//2+1,Narr[d]):
+                myvec[i] = i-Narr[d]
+            kvec = 2*xp.pi/(Narr[d]*dxarr[d])*myvec
+            myvecs.append(kvec)
+        if dim==1:
+            kx = myvecs[0]
+        elif dim==2:
+            kx, ky = xp.meshgrid(myvecs[0], myvecs[1], indexing='ij')
+            kmat = np.stack((kx, ky), axis=-1)
+        else:
+            kx, ky, kz = xp.meshgrid(myvecs[0], myvecs[1], myvecs[2], indexing='ij')
+            kmat = np.stack((kx, ky, kz), axis=-1)
+
     for t in range(nsteps):
         for d in range(dim):
             if dim==1:
@@ -395,6 +419,46 @@ def gen_field(Narr, dxarr, dim, nsteps, ck, compressibility):
             else:
                 fourier_white_noise = xp.fft.rfftn(white_noise[d,...,t], axes=(0,1,2))
                 noise[d,...,t] = xp.multiply(xp.sqrt(ck[...,:(Narr[-1]//2+1)]), fourier_white_noise)
+        if compressibility=='incompressible':
+            #projector = np.identity(dim)
+            if dim==1:
+                print('WARNING: incompressibility invalid in 1d. Not doing projection.')
+            elif dim==2:
+                k2 = xp.einsum('ijk,ijk->ij', kmat, kmat)
+                #print(k2.shape)
+                k2mat = xp.einsum('ijk,ijl->ijkl', kmat/np.sqrt(k2[:,:,None]), kmat/np.sqrt(k2[:,:,None]))
+                k2mat = xp.nan_to_num(k2mat) #corrects for dividing by k=0
+                id = xp.zeros(k2mat.shape)
+                for i in range(dim):
+                    for j in range(dim):
+                        if i==j:
+                            id[:,:,i,j] = 1
+                        else:
+                            id[:,:,i,j] = 0
+                projector = id-k2mat
+                projector = projector[:,:(Narr[-1]//2+1),:,:]
+                k2mat = k2mat[:,:(Narr[-1]//2+1),:,:]
+                #print(noise[...,t].shape)
+                noise[...,t] = np.einsum('ijkl,lij->kij', projector, noise[...,t])
+                #print(np.max(np.abs(np.einsum('ijkl,lij->kij', k2mat, noise[...,t])))) #this should be very small
+            else:
+                k2 = xp.einsum('ijkl,ijkl->ijk', kmat, kmat)
+                #print(k2.shape)
+                k2mat = xp.einsum('ijkl,ijkm->ijklm', kmat/np.sqrt(k2[:,:,:,None]), kmat/np.sqrt(k2[:,:,:,None]))
+                k2mat = xp.nan_to_num(k2mat) #corrects for dividing by k=0
+                id = xp.zeros(k2mat.shape)
+                for i in range(dim):
+                    for j in range(dim):
+                        if i==j:
+                            id[:,:,:,i,j] = 1
+                        else:
+                            id[:,:,:,i,j] = 0
+                projector = id-k2mat
+                projector = projector[:,:,:(Narr[-1]//2+1),:,:]
+                k2mat = k2mat[:,:,:(Narr[-1]//2+1),:,:]
+                #print(noise[...,t].shape)
+                noise[...,t] = np.einsum('ijklm,mijk->lijk', projector, noise[...,t])
+                #print(np.max(np.abs(np.einsum('ijklm,mijk->lijk', k2mat, noise[...,t])))) #this should be very small
         if compressibility=='incompressible':
             #projector = np.identity(dim)
             if dim==1:
