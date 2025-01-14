@@ -237,7 +237,7 @@ class ActiveNoiseGenerator():
                     myvec[i] = i
                 for i in range(self.Narr[d]//2+1,self.Narr[d]):
                     myvec[i] = i-self.Narr[d]
-                kvec = 2*xp.pi/(self.Narr[d]*self.dxarr[d])*myvec
+                kvec = 2*self.xp.pi/(self.Narr[d]*self.dxarr[d])*myvec
                 myvecs.append(kvec)
             if self.dim==1:
                 kx = myvecs[0]
