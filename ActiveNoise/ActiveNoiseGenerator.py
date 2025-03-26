@@ -2,6 +2,7 @@ import numpy as np
 import os
 import sys
 import argparse
+from numba import cuda
 #import GPUtil
 
 try:
@@ -97,11 +98,11 @@ class ActiveNoiseGenerator():
     def run(self, init_fourier_arr):
 
         if self.dim==1:
-            self.traj_arr = np.zeros((self.dim,self.Nx,self.nsteps+1))
+            self.traj_arr = self.xp.zeros((self.dim,self.Nx,self.nsteps+1))
         elif self.dim==2:
-            self.traj_arr = np.zeros((self.dim,self.Nx,self.Ny,self.nsteps+1))
+            self.traj_arr = self.xp.zeros((self.dim,self.Nx,self.Ny,self.nsteps+1))
         else:
-            self.traj_arr = np.zeros((self.dim,self.Nx,self.Ny,self.Nz,self.nsteps+1))
+            self.traj_arr = self.xp.zeros((self.dim,self.Nx,self.Ny,self.Nz,self.nsteps+1))
 
         ck = self.get_spatial_covariance()
         fourier_noise = init_fourier_arr
@@ -113,9 +114,10 @@ class ActiveNoiseGenerator():
 
         #Put in step 0 because hoomd requires it for multiple runs
         if self.xp==np:
-            self.traj_arr[...,0] = self.get_real_field(fourier_noise[...,np.newaxis], self.Narr)[...,0]
+            self.traj_arr[...,0] = self.get_real_field(fourier_noise[...,self.xp.newaxis], self.Narr)[...,0]
         else: 
-            self.traj_arr[...,0] = self.xp.asnumpy(self.get_real_field(fourier_noise[...,np.newaxis], self.Narr)[...,0])
+            #self.traj_arr[...,0] = self.xp.asnumpy(self.get_real_field(fourier_noise[...,np.newaxis], self.Narr)[...,0])
+            self.traj_arr[...,0] = self.get_real_field(fourier_noise[...,self.xp.newaxis], self.Narr)[...,0]
 
         for c in range(self.nchunks):
             if self.dim==1:
@@ -125,7 +127,6 @@ class ActiveNoiseGenerator():
             else:
                 fourier_arr = self.xp.zeros((3,self.Nx,self.Ny,self.Nz//2+1,self.chunksize), dtype=self.xp.complex64)
             spat_corr_field = self.gen_field(self.chunksize, ck)
-
             for n in range(self.chunksize):
                 if n%self.print_freq==0 and self.verbose:
                     print('active noise step', n)
@@ -137,7 +138,8 @@ class ActiveNoiseGenerator():
             if self.xp==np:
                 self.traj_arr[...,(c*self.chunksize+1):((c+1)*self.chunksize+1)] = self.get_real_field(fourier_arr, self.Narr)
             else:
-                self.traj_arr[...,(c*self.chunksize+1):((c+1)*self.chunksize+1)] = self.xp.asnumpy(self.get_real_field(fourier_arr, self.Narr))
+                #self.traj_arr[...,(c*self.chunksize+1):((c+1)*self.chunksize+1)] = self.xp.asnumpy(self.get_real_field(fourier_arr, self.Narr))
+                self.traj_arr[...,(c*self.chunksize+1):((c+1)*self.chunksize+1)] = self.get_real_field(fourier_arr, self.Narr)
 
             if self.do_output==1:
                 self.xp.savez('data/field_%04d.npz' % (c*self.chunksize), self.traj_arr[...,(c*self.chunksize+1):((c+1)*self.chunksize+1)])
@@ -199,6 +201,7 @@ class ActiveNoiseGenerator():
 
         return ck
 
+    @cuda.jit
     def gen_field(self, nsteps, ck):
 
         """Create a spatially correlated noise field in Fourier space
@@ -240,7 +243,7 @@ class ActiveNoiseGenerator():
                     myvec[i] = i-self.Narr[d]
                 kvec = 2*self.xp.pi/(self.Narr[d]*self.dxarr[d])*myvec
                 if self.do_lattice_correction==True:
-                    print('doing correction')
+                    #print('doing correction')
                     kvec = np.sin(kvec*self.dxarr[d])/self.dxarr[d]
                 myvecs.append(kvec)
             if self.dim==1:
